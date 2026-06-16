@@ -1,0 +1,95 @@
+{
+  "collapse-filter": false,
+  "search": "-path:_meta -path:db -path:node_modules -path:dist",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": true,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "tag:#type/moc",
+      "color": { "a": 1, "rgb": 16766976 }
+    },
+    {
+      "query": "tag:#type/agent",
+      "color": { "a": 1, "rgb": 15022383 }
+    },
+    {
+      "query": "tag:#type/rule",
+      "color": { "a": 1, "rgb": 3899638 }
+    },
+    {
+      "query": "tag:#type/doc",
+      "color": { "a": 1, "rgb": 10266543 }
+    },
+    {
+      "query": "tag:#type/tool",
+      "color": { "a": 1, "rgb": 1357478 }
+    },
+    {
+      "query": "tag:#type/skill",
+      "color": { "a": 1, "rgb": 10182117 }
+    },
+    {
+      "query": "tag:#type/loop",
+      "color": { "a": 1, "rgb": 16747520 }
+    },
+    {
+      "query": "tag:#type/decision",
+      "color": { "a": 1, "rgb": 8421376 }
+    },
+    {
+      "query": "tag:#type/note",
+      "color": { "a": 1, "rgb": 5688562 }
+    },
+    {
+      "query": "tag:#type/journal",
+      "color": { "a": 1, "rgb": 2600032 }
+    },
+    {
+      "query": "tag:#type/plan",
+      "color": { "a": 1, "rgb": 52945 }
+    },
+    {
+      "query": "tag:#type/project",
+      "color": { "a": 1, "rgb": 14041013 }
+    },
+    {
+      "query": "tag:#type/person",
+      "color": { "a": 1, "rgb": 16740277 }
+    },
+    {
+      "query": "tag:#type/contact",
+      "color": { "a": 1, "rgb": 16007006 }
+    },
+    {
+      "query": "tag:#type/account",
+      "color": { "a": 1, "rgb": 13938487 }
+    },
+    {
+      "query": "tag:#type/summary",
+      "color": { "a": 1, "rgb": 16758528 }
+    },
+    {
+      "query": "tag:#type/glossary",
+      "color": { "a": 1, "rgb": 6583435 }
+    },
+    {
+      "query": "tag:#type/recipe",
+      "color": { "a": 1, "rgb": 9133116 }
+    }
+  ],
+  "collapse-display": true,
+  "showArrow": false,
+  "textFadeMultiplier": -0.4,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": false,
+  "centerStrength": 0.12,
+  "repelStrength": 16,
+  "linkStrength": 0.4,
+  "linkDistance": 220,
+  "scale": 0.3,
+  "close": true
+}

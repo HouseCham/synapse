@@ -1,0 +1,246 @@
+#!/usr/bin/env sh
+# agents.sh — Synapse context-vault CLI: one shell command per agent, each launching
+# OpenCode (local Ollama over Tailscale) seeded with a rendered, role-based briefing.
+#
+# Source from your shell rc (one-time setup — the installer bakes the absolute path):
+#     export SYNAPSE_VAULT="/abs/path/to/wiki"; source "/abs/path/to/wiki/_meta/tools/agents.sh"
+# (run `node _meta/tools/install.mjs --write` to add that line for you)
+#
+# ── What you get ──────────────────────────────────────────────────────────────
+#
+#   curator                              # launch OpenCode as agent-curator (its default profile)
+#   curator moc-finances                 # agent + a target MOC (standard — auto-upgrades)
+#   reconciler moc-contacts              # agent + a single domain hub
+#   curator moc-finances --profile fat   # override the profile (context dial)
+#   curator moc-finances "regenerate the Q2 summary view"   # seed a task
+#
+#   vault-agents    # list all agent commands + their purpose
+#   vault-mocs      # list all MOC targets (valid second arg)
+#   vault-profiles  # explain the three profiles (context dials)
+#
+# ── Syntax ────────────────────────────────────────────────────────────────────
+#   <agent-name> [<target-id>] [--profile lean|standard|fat] ["task text"]
+#
+#   <agent-name>   = agent id minus the `agent-` prefix  (e.g. curator, reconciler, ingester)
+#   <target-id>    = any vault id: moc-*, project-*, plan-*, note-*, contact-*, account-*, …
+#   --profile      = lean | standard | fat; auto-upgrades to standard when a MOC target is given
+#
+# Runtime: OpenCode (`opencode run -m <model> --dir <vault> "<briefing>"`) against local Ollama over
+# Tailscale — NO API key, NO cloud. The model + endpoint live in YOUR ~/.config/opencode/opencode.json;
+# this file hardcodes neither a hostname nor a key. Default model below is overridable via SYNAPSE_MODEL.
+#
+# Must be SOURCED, not executed. zsh + bash (+ POSIX sh) supported.
+
+# ── default model (override in your env: export SYNAPSE_MODEL=ollama/<your-model>) ──
+: "${SYNAPSE_MODEL:=ollama/qwen3.6-256k}"
+
+# ── locate the vault ──────────────────────────────────────────────────────────
+# Prefer a pre-set SYNAPSE_VAULT — the installer bakes the absolute path into the source
+# line, which is robust against shells / direnv where sourced-script self-detection
+# (%x / BASH_SOURCE) comes back empty. Fall back to self-detection (2 levels up from
+# _meta/tools/) only when SYNAPSE_VAULT isn't already a valid vault.
+if [ -z "${SYNAPSE_VAULT:-}" ] || [ ! -d "${SYNAPSE_VAULT:-}/agents" ]; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    _mx_self="${(%):-%x}"
+  elif [ -n "${BASH_VERSION:-}" ]; then
+    _mx_self="${BASH_SOURCE[0]}"
+  else
+    _mx_self="$0"
+  fi
+  SYNAPSE_VAULT="$(cd "$(dirname "$_mx_self")/../.." 2>/dev/null && pwd)"
+  unset _mx_self
+fi
+export SYNAPSE_VAULT SYNAPSE_MODEL
+
+if [ -z "$SYNAPSE_VAULT" ] || [ ! -d "$SYNAPSE_VAULT/agents" ]; then
+  echo "agents.sh: could not locate the vault (SYNAPSE_VAULT=$SYNAPSE_VAULT)" >&2
+  return 0 2>/dev/null || exit 0
+fi
+
+# ── core launcher ──────────────────────────────────────────────────────────────
+# $1 = agent-id (full, e.g. agent-curator)
+# $2 = default profile (from the agent's `profile:` frontmatter)
+# rest = optional [<target-id>] [--profile P] ["task"]
+__mx_launch() {
+  agent="$1"; profile="$2"; shift 2
+
+  # helper: is $1 a bare profile word?
+  __mx_is_profile() { case "$1" in lean|standard|fat) return 0;; *) return 1;; esac; }
+
+  # optional target id — a vault note slug (lowercase, starts with a letter, not a flag/profile word)
+  target=""
+  if [ -n "${1:-}" ] && ! __mx_is_profile "${1:-}" && [ "${1#--}" = "$1" ] && [ "${1#[a-z]}" != "$1" ]; then
+    target="$1"; shift
+    # auto-upgrade to standard for MOC targets (user can still override below)
+    case "$target" in moc-*) [ "$profile" = "lean" ] && profile="standard" ;; esac
+  fi
+
+  # optional profile — bare word (lean|standard|fat) OR --profile / -P flag
+  if __mx_is_profile "${1:-}"; then
+    profile="$1"; shift
+  elif [ "${1:-}" = "--profile" ] || [ "${1:-}" = "-P" ]; then
+    case "${2:-}" in
+      lean|standard|fat) profile="$2"; shift 2 ;;
+      *) echo "profile must be lean|standard|fat (got '${2:-}')" >&2; return 2 ;;
+    esac
+  fi
+
+  # --no-semantic escape: a flag anywhere in the remaining args forces the deterministic-only path.
+  # Strip it out of the positional args (POSIX-safe: rebuild $@ without it) so it never leaks into the task.
+  no_semantic=0
+  __mx_kept=""
+  for __mx_a in "$@"; do
+    if [ "$__mx_a" = "--no-semantic" ]; then no_semantic=1; continue; fi
+    __mx_kept="${__mx_kept:+$__mx_kept }$__mx_a"
+  done
+
+  # remaining args = task text passed through to OpenCode as the positional prompt suffix
+  task="$__mx_kept"
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node not found — install Node.js to render briefings." >&2; return 127
+  fi
+
+  # ── decide deterministic-only vs. semantic-augmented ────────────────────────────
+  # Semantic augment runs only when a TASK is supplied (it embeds task + briefing). With no task we keep
+  # the pure render. SYNAPSE_SEMANTIC overrides: 1/on → force on, 0/off → force off. Default: ON when
+  # db/synapse.db has a non-empty note_vectors table, else OFF (the augment would only skip anyway).
+  # --no-semantic always wins. This realizes the opt-in posture of decision-0005 / rule-semantic-suggests.
+  __mx_semantic=0
+  if [ -n "$task" ] && [ "$no_semantic" = "0" ]; then
+    case "${SYNAPSE_SEMANTIC:-auto}" in
+      1|on|true|yes) __mx_semantic=1 ;;
+      0|off|false|no) __mx_semantic=0 ;;
+      *) # auto: probe note_vectors for at least one row
+        if node -e '
+          import("node:sqlite").then(({DatabaseSync})=>{
+            try{
+              const db=new DatabaseSync(process.argv[1],{readOnly:true});
+              const t=db.prepare("SELECT name FROM sqlite_master WHERE type='"'"'table'"'"' AND name='"'"'note_vectors'"'"'").get();
+              const n=t?db.prepare("SELECT COUNT(*) c FROM note_vectors").get().c:0;
+              process.exit(n>0?0:1);
+            }catch{process.exit(1);}
+          }).catch(()=>process.exit(1));
+        ' "$SYNAPSE_VAULT/db/synapse.db" 2>/dev/null; then __mx_semantic=1; fi ;;
+    esac
+  fi
+
+  # Render the briefing. Args are passed EXPLICITLY (agent + optional target) — never via an
+  # unquoted string: zsh does not word-split unquoted vars, so `node … $ids` would pass
+  # "agent moc" as ONE arg and render would fail. When semantic is on, route through augment.mjs (which
+  # shells render.mjs itself, then appends the labeled "## Semantically related" section); the task text
+  # is passed via --task so augment can embed it. augment degrades gracefully if Ollama is unreachable.
+  _mx_render() {  # $1=outfile ("" → --copy fallback passthrough), rest appended
+    _out="$1"; shift
+    if [ "$__mx_semantic" = "1" ]; then
+      _mx_eng="$SYNAPSE_VAULT/_meta/tools/augment.mjs"
+      if [ -n "$_out" ]; then
+        if [ -n "$target" ]; then node "$_mx_eng" "$agent" "$target" --profile "$profile" --task "$task" "$@" > "$_out" 2>/dev/null
+        else                      node "$_mx_eng" "$agent"           --profile "$profile" --task "$task" "$@" > "$_out" 2>/dev/null; fi
+      else
+        if [ -n "$target" ]; then node "$_mx_eng" "$agent" "$target" --profile "$profile" --task "$task" "$@" 2>&1
+        else                      node "$_mx_eng" "$agent"           --profile "$profile" --task "$task" "$@" 2>&1; fi
+      fi
+    else
+      _mx_eng="$SYNAPSE_VAULT/_meta/tools/render.mjs"
+      if [ -n "$_out" ]; then
+        if [ -n "$target" ]; then node "$_mx_eng" "$agent" "$target" --profile "$profile" "$@" > "$_out" 2>/dev/null
+        else                      node "$_mx_eng" "$agent"           --profile "$profile" "$@" > "$_out" 2>/dev/null; fi
+      else
+        if [ -n "$target" ]; then node "$_mx_eng" "$agent" "$target" --profile "$profile" "$@" 2>&1
+        else                      node "$_mx_eng" "$agent"           --profile "$profile" "$@" 2>&1; fi
+      fi
+    fi
+  }
+
+  if ! command -v opencode >/dev/null 2>&1; then
+    # fallback: copy the briefing to the clipboard so you can paste it into any tool
+    echo "[synapse] opencode not found — copying briefing to clipboard. (npm i -g opencode-ai)" >&2
+    _mx_render "" --copy
+    return $?
+  fi
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/synapse.XXXXXX")" || return 1
+  if ! _mx_render "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  tok="$(( $(wc -c < "$tmp" | tr -d ' ') / 4 ))"
+  echo "[synapse] ${agent#agent-}${target:+ + $target} (${profile}, ~${tok} tok$([ "$__mx_semantic" = "1" ] && echo ', +semantic'), $SYNAPSE_MODEL) → launching OpenCode" >&2
+  if [ "$tok" -gt 60000 ]; then
+    echo "[synapse] ⚠ briefing is large (~${tok} tok) — 'fat' pulls the transitive graph. Try 'standard' for a tighter, faster prompt on a local model." >&2
+  fi
+
+  # Build the briefing into the prompt: render output + (optional) task text. OpenCode `run` takes the
+  # prompt as a positional arg; --dir scopes the session to the vault (read freely; edits/bash gated by
+  # your opencode.json permission posture — see decision-0004 / doc-runtime-wiring).
+  briefing="$(cat "$tmp")"
+  rm -f "$tmp"
+  if [ -n "$task" ]; then
+    opencode run -m "$SYNAPSE_MODEL" --dir "$SYNAPSE_VAULT" "$briefing
+
+---
+TASK: $task"
+  else
+    opencode run -m "$SYNAPSE_MODEL" --dir "$SYNAPSE_VAULT" "$briefing"
+  fi
+}
+
+# ── auto-generate one function per agent-*.md ─────────────────────────────────
+_mx_field() { sed -n "s/^$2:[[:space:]]*//p" "$1" | tr -d '"' | head -1; }
+
+for _mx_f in "$SYNAPSE_VAULT"/agents/agent-*.md; do
+  [ -e "$_mx_f" ] || continue
+  _mx_id="$(basename "$_mx_f" .md)"
+  _mx_name="${_mx_id#agent-}"                            # e.g. curator
+  _mx_prof="$(_mx_field "$_mx_f" profile)"
+  _mx_prof="${_mx_prof:-lean}"
+  # shellcheck disable=SC2086,SC2090
+  eval "${_mx_name}() { __mx_launch '${_mx_id}' '${_mx_prof}' \"\$@\"; }"
+done
+unset _mx_f _mx_id _mx_name _mx_prof
+
+# ── discovery commands ────────────────────────────────────────────────────────
+
+vault-agents() {
+  echo "Synapse vault agent commands:"
+  echo "  Usage: <name> [<target-id>] [--profile lean|standard|fat] [\"task\"]"
+  echo ""
+  for f in "$SYNAPSE_VAULT"/agents/agent-*.md; do
+    [ -e "$f" ] || continue
+    id="$(basename "$f" .md)"
+    name="${id#agent-}"
+    prof="$(_mx_field "$f" profile)"; prof="${prof:-lean}"
+    purpose="$(_mx_field "$f" purpose)"
+    printf '  %-14s [%-8s] %s\n' "$name" "$prof" "$purpose"
+  done
+  echo ""
+  echo "  Also: vault-mocs  vault-profiles"
+  echo "  Runtime: opencode run -m $SYNAPSE_MODEL --dir \$SYNAPSE_VAULT  (local Ollama over Tailscale — no API key)"
+}
+
+vault-mocs() {
+  echo "Synapse vault MOC targets (pass as the second arg to any agent):"
+  echo "  Usage: <agent> <moc-id> [--profile standard]"
+  echo ""
+  for f in "$SYNAPSE_VAULT"/moc/moc-*.md "$SYNAPSE_VAULT"/moc-synapse.md; do
+    [ -e "$f" ] || continue
+    id="$(basename "$f" .md)"
+    title="$(grep -m1 '^title:' "$f" | sed 's/^title:[[:space:]]*//' | tr -d '"')"
+    printf '  %-24s %s\n' "$id" "$title"
+  done
+  echo ""
+  echo "  Also valid as targets: project-* / plan-* / note-* / contact-* / account-* / summary-*"
+  echo "  Discover: ls \$SYNAPSE_VAULT/moc"
+}
+
+vault-profiles() {
+  echo "Synapse vault profiles (context dial — presets of relationship ROLES, not hop counts):"
+  echo ""
+  printf '  %-10s %-30s %-12s %s\n' "Profile" "Roles pulled" "~Budget" "Best for"
+  printf '  %-10s %-30s %-12s %s\n' "lean" "self + rules/skills/tools/deleg" "~4K tok" "an agent + its rules/skills/tools, or a single unit note"
+  printf '  %-10s %-30s %-12s %s\n' "standard" "+ members/attach/navigate/refs" "~15K tok" "a domain MOC (pulls its members, attachments, refs)"
+  printf '  %-10s %-30s %-12s %s\n' "fat" "+ transitive closure" "~30K tok" "deep dives / maximum context"
+  echo ""
+  echo "  Rule of thumb: agents → their declared profile; MOCs → standard (auto-applied when target is moc-*)."
+  echo "  --dry-run previews the closure without rendering bodies."
+}

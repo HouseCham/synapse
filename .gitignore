@@ -1,0 +1,26 @@
+# Synapse — local-first and private. Keep sensitive/derived artifacts out of git.
+
+# The records database is derived (replayable from migrations/), sensitive, and binary.
+db/*.db
+db/*.db-wal
+db/*.db-shm
+db/*.sqlite
+db/*.sqlite3
+
+# Tooling
+node_modules/
+dist/
+
+# Transient agent-runtime session logs (the curated audit trail lives in inbox/curator/logs/)
+_meta/logs/
+
+# macOS / editor noise
+.DS_Store
+*.swp
+
+# Obsidian: keep vault config; ignore volatile per-machine workspace + cache
+.obsidian/workspace*.json
+.obsidian/cache
+
+# Editor workspace files (per-machine)
+*.code-workspace
