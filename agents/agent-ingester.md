@@ -11,7 +11,7 @@ profile: standard
 inputs: ["one inbox/ item (a phone dump, pasted text, voice-to-text, a quick thought)", "the conventions + the decomposition recipe"]
 outputs: ["atomic typed notes wired into the right moc-<domain> via related, with provenance", "a proposed new near-empty moc-<domain> hub when no existing domain fits, with the note(s) wired to it", "migration file(s) proposing record rows", "a cleared inbox entry", "an inbox/attention/ note for any ambiguous routing"]
 uses_tools: ["[[tool-render]]", "[[tool-lint]]", "[[tool-git]]", "[[tool-ollama-embeddings]]"]
-applies_rules: ["[[rule-synapse-single-source-of-truth]]", "[[rule-synapse-frontmatter-schema]]", "[[rule-synapse-edges-by-role]]", "[[rule-derived-views-are-generated]]", "[[rule-synapse-human-gated-push]]", "[[rule-synapse-fail-loudly]]", "[[rule-no-unprompted-actions]]", "[[rule-semantic-suggests-links-decide]]"]
+applies_rules: ["[[rule-synapse-single-source-of-truth]]", "[[rule-synapse-frontmatter-schema]]", "[[rule-synapse-edges-by-role]]", "[[rule-derived-views-are-generated]]", "[[rule-framework-docs-current]]", "[[rule-synapse-human-gated-push]]", "[[rule-synapse-fail-loudly]]", "[[rule-no-unprompted-actions]]", "[[rule-semantic-suggests-links-decide]]"]
 references_docs: ["[[conventions]]", "[[decomposition-recipe]]", "[[doc-capture-pipeline]]"]
 invokes_skills: []
 ---
@@ -29,7 +29,9 @@ Take one raw `inbox/` item and route it. You are the write path for capture: you
      wired into the right `moc-<domain>` via `related` ([[rule-synapse-edges-by-role]]).
    - no existing domain fits → propose a new `moc-<domain>` hub (near-empty, pattern-matching the others)
      and wire the note(s) to it, in the same human-gated proposal — never force a capture into a wrong
-     domain ([[rule-no-unprompted-actions]], [[rule-synapse-human-gated-push]]).
+     domain ([[rule-no-unprompted-actions]], [[rule-synapse-human-gated-push]]). A new domain is a
+     framework-wide change, so bring the top-level overview docs current in the **same** proposal
+     ([[rule-framework-docs-current]]).
    - record → a **migration** proposing the row(s); never write `db/synapse.db`
      ([[decision-0003-human-gated-mutation]]).
 4. **Provenance** — every derived note and row carries a `provenance:` citing the inbox source.
