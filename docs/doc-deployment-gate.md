@@ -6,7 +6,7 @@ tags:
   - type/doc
   - area/security
   - status/active
-references_docs: ["[[conventions]]"]
+references_docs: ["[[conventions]]", "[[doc-runtime-wiring]]"]
 related: ["[[moc-synapse]]"]
 ---
 
@@ -38,21 +38,25 @@ below expressible as a single path boundary.
 The whole point of the layout is that you can point an **external AI coding agent** (e.g. Claude Code) at
 the parent directory to read and maintain the framework, while it is *structurally incapable* of touching
 the vault. You configure this gate at the **host level**, outside either repo. The reference gate is a
-Claude Code configuration in `~/.claude/settings.json`:
+Claude Code configuration in `~/.claude/settings.json`, and the enforcement is **a single, fail-closed,
+path-based `PreToolUse` hook** — the sole enforcement point:
 
-- **`permissions.deny` rules** that refuse tool access to vault paths, plus
-- **a `PreToolUse` hook** that inspects every tool call and **denies** any `Read`/`Edit`/`Write`/`Glob`/`Grep`
-  whose path resolves inside the vault, and any `Bash` command that references the vault path.
+- The hook inspects every tool call and **denies** any `Read`/`Edit`/`Write`/`Glob`/`Grep` whose path
+  resolves inside the vault, and any `Bash` command that references the vault path.
+- It is **fail-closed**: if the hook cannot prove a call is safe, it denies. A single matcher covers every
+  path into the vault, so no separate `permissions.deny` list is needed — earlier drafts paired deny rules
+  with a hook, but the hook subsumes them, leaving one enforcement point to reason about and maintain.
 
 The gate allows **exactly one** exception: a clean `git fetch` / `git merge` / `git pull … upstream` — so
 the framework can still pull upstream updates *into* the vault, without ever exposing the vault's contents.
 Compound or redirected commands are rejected; only the bare upstream-pull form passes.
 
-**Reference implementation.** This boundary lives in the host's AI-agent config, not in either repo:
-`permissions.deny` rules plus a fail-closed `PreToolUse` hook script (e.g. `~/.claude/hooks/synapse-vault-gate.sh`)
-in `~/.claude/settings.json`. The hook matches on **path fields**, so naming the vault inside a framework
-note is fine — only paths *into* the vault are blocked. Being host-level, the gate is the user's to own;
-neither the framework nor the vault encodes it.
+**Reference implementation.** This boundary lives in the host's AI-agent config, not in either repo: a
+single fail-closed `PreToolUse` hook script (e.g. `~/.claude/hooks/vault-privacy-gate.sh`) wired in
+`~/.claude/settings.json`. The hook matches on **path fields**, so naming the vault inside a framework
+note is fine — only paths *into* the vault are blocked. The hook filename is deliberately marker-free, so
+the external agent can maintain the hook script itself without the name leaking the boundary it enforces.
+Being host-level, the gate is the user's to own; neither the framework nor the vault encodes it.
 
 The result: the agent sees the framework as a normal working tree, and the vault as a wall. Reads, edits,
 writes, and searches that would reach the vault's contents are blocked; only the one-way upstream pull is
@@ -73,6 +77,29 @@ So the boundary is not "the vault is read-only" — it is "*this one external ag
 Your own local-first tooling is unaffected, which is exactly the local-only posture Synapse exists to
 protect ([[doc-vision]], [[doc-security-privacy]]).
 
+## It is owner-toggleable — but only by the owner
+
+The gate is the **owner's switch**, not the agent's. The hook checks a **host sentinel** — a file outside
+either repo, e.g. `~/.claude/vault-gate-off` — before it enforces. The default is **ON**: with no sentinel
+present, the gate is live and the vault is sealed.
+
+This lets the owner deliberately open the gate for a scoped task and then close it again. The motivating
+case: temporarily letting a **more capable external CLI** maintain the vault directly — Claude Code,
+selected via the `--cli claude` selector ([[doc-runtime-wiring]]) — for a one-off cleanup the local model
+can't handle. The owner creates the sentinel, runs the scoped task, then deletes it to re-seal the vault.
+Default ON means a forgotten step fails *closed*, not open.
+
+Crucially, disabling the gate is meant to be a **deliberate human act**, not something the agent does to
+free itself — but it's worth being precise about *how* that's enforced, because it's a **policy guardrail,
+not a structural one**. The vault hook guards paths *into the vault*; it does **not** itself block writes
+to the host sentinel (the sentinel path is outside the vault). What actually keeps an agent from flipping
+its own gate is the host CLI's **safety classifier**, which independently refuses agent-initiated attempts
+to weaken a user's privacy control — in practice it declines to create the off-sentinel on the agent's own
+initiative. Combined with **default-ON** (a forgotten or failed toggle fails *closed*), the effect is that
+the owner turns the gate off and on as a conscious act at the host, and the agent only ever experiences
+whichever state the owner has set. The protection is real, but it lives in the agent's safety policy layer
+plus the human-in-the-loop, not in the vault hook alone.
+
 ## Why this is a central intention
 
 Synapse's reason to exist is a second brain an LLM can read and maintain **without your data ever leaving
@@ -84,6 +111,6 @@ shareable; the vault is sealed; the only seam between them is the reviewable, on
 pull.
 
 ## Related
-[[doc-security-privacy]] · [[doc-fork-and-extend]] · [[doc-governance-model]] · [[doc-vision]] · [[decision-0004-opencode-local-ollama-runtime]] · [[moc-synapse]]
+[[doc-security-privacy]] · [[doc-fork-and-extend]] · [[doc-governance-model]] · [[doc-vision]] · [[doc-runtime-wiring]] · [[decision-0004-opencode-local-ollama-runtime]] · [[moc-synapse]]
 </content>
 </invoke>
